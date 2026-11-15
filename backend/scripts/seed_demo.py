@@ -16,7 +16,7 @@ def seed():
   for index,name in enumerate(names):
    study=db.scalar(select(TraverseStudy).where(TraverseStudy.name==name))
    if not study:
-    study=TraverseStudy(name=name,filename=f'ld-traverse-{index+1}-202611.csv',description=['独立不等距测线，预设18mm合成结构','多个频率共存，不能仅凭峰认定制造原因','恒定厚度RSS0为0，无定义谱'][index]);db.add(study);db.flush();x=np.r_[0.,np.cumsum(rng.uniform(.8,2.3,119))];t=x-x[0];y=.5+.075*np.cos(2*np.pi*t/18-.7)+rng.normal(0,.014,120) if index==0 else .55+.055*np.sin(2*np.pi*t/30)+.04*np.cos(2*np.pi*t/12)+rng.normal(0,.014,120) if index==1 else np.full(120,.5)
+    study=TraverseStudy(name=name,filename=f'ld-traverse-{index+1}-202611.csv',description=['独立不等距测线，预设18mm合成结构','多个频率共存，不能仅凭峰认定制造原因','恒定厚度RSS0为0，无定义谱'][index],status='ready',expected_batches=1,received_batches=1,point_count=120);db.add(study);db.flush();x=np.r_[0.,np.cumsum(rng.uniform(.8,2.3,119))];t=x-x[0];y=.5+.075*np.cos(2*np.pi*t/18-.7)+rng.normal(0,.014,120) if index==0 else .55+.055*np.sin(2*np.pi*t/30)+.04*np.cos(2*np.pi*t/12)+rng.normal(0,.014,120) if index==1 else np.full(120,.5)
     for i,(position,value) in enumerate(zip(x,y)):db.add(TraversePoint(study_id=study.id,reference=f'LD{index+1}-P{i+1:03d}',position=float(position),thickness=float(value)))
     db.commit()
    nameplan=f'LD{index+1}预设10至90毫米频率计划'

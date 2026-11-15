@@ -27,6 +27,7 @@ out/
 .vite/
 .parcel-cache/
 coverage/
+.pytest_cache/
 venv/
 target/
 *.o

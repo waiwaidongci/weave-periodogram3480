@@ -7,7 +7,9 @@ from .validation import validate_plan
 from .audit import record
 
 def create_plan(db,data,actor):
- if not db.get(TraverseStudy,data.study_id):raise HTTPException(404,'测线研究不存在')
+ study=db.get(TraverseStudy,data.study_id)
+ if not study:raise HTTPException(404,'测线研究不存在')
+ if study.status=='importing':raise HTTPException(409,'测线分批导入未完成，不能冻结频率计划')
  if db.scalar(select(FrequencyPlan).where(FrequencyPlan.name==data.name)):raise HTTPException(409,'计划名已存在')
  grid=np.linspace(data.min_frequency,data.max_frequency,data.grid_size).tolist();payload={**data.model_dump(),'frequencies':grid}
  try:validate_plan(payload)

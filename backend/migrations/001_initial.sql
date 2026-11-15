@@ -1,4 +1,12 @@
 -- ORM metadata creates initial schema. No production migration runner is claimed.
--- traverse_studies(name UNIQUE); traverse_points(study_id,reference UNIQUE,position UNIQUE,thickness)
+-- traverse_studies(name UNIQUE, status, expected_batches, received_batches, point_count);
+-- import_batches(study_id, batch_index UNIQUE per study, point_count, created_by, created_at);
+-- traverse_points(study_id,reference UNIQUE,position UNIQUE,thickness)
 -- frequency_plans(frequencies JSON,permutations,seed); spectrum_runs(source_snapshot JSON,plan_snapshot JSON,result JSON)
 -- weave_notes(result_snapshot JSON), users, audit_logs. Numeric mappings use Double(asdecimal=False).
+-- 已存在的库（ORM create_all不会ALTER）需手动补齐：
+-- ALTER TABLE traverse_studies ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'ready';
+-- ALTER TABLE traverse_studies ADD COLUMN expected_batches INTEGER NOT NULL DEFAULT 0;
+-- ALTER TABLE traverse_studies ADD COLUMN received_batches INTEGER NOT NULL DEFAULT 0;
+-- ALTER TABLE traverse_studies ADD COLUMN point_count INTEGER NOT NULL DEFAULT 0;
+-- CREATE TABLE import_batches (id SERIAL PRIMARY KEY, study_id INTEGER REFERENCES traverse_studies(id), batch_index INTEGER NOT NULL, point_count INTEGER NOT NULL, created_by VARCHAR(120), created_at TIMESTAMP WITH TIME ZONE DEFAULT now(), UNIQUE(study_id,batch_index));

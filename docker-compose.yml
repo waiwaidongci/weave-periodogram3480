@@ -31,7 +31,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-weave}:${POSTGRES_PASSWORD:-weave_demo}@db:5432/${POSTGRES_DB:-weave}
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-local-demo-weave-periodogram-change-for-deployment}
-      RATE_LIMIT_WRITES: ${RATE_LIMIT_WRITES:-60}
+      RATE_LIMIT_WRITES: ${RATE_LIMIT_WRITES:-600}
       SEED_DEMO: ${SEED_DEMO:-true}
       ARTIFACT_DIR: /artifacts
     ports: ["${BACKEND_PORT:-19238}:8000"]

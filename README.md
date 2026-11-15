@@ -24,7 +24,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 |analyst@lingdu.demo / Lingdu2026!|六页、导入/修订/计划/运行/说明|冻结网格、真队列；审批403|
 |viewer@lingdu.demo / Lingdu2026!|六页只读、批准CSV|阅读全谱/窗口/全局p并导出；写入403|
 
-`.env.example`列出三个端口、POSTGRES_DB/USER/PASSWORD、JWT_SECRET、SEED_DEMO、RATE_LIMIT_WRITES（默认60）。演示密码和JWT secret仅用于本地，部署须设置自己的值。首次启动自动seed，独立重复执行也幂等，不覆盖用户测点和说明。
+`.env.example`列出三个端口、POSTGRES_DB/USER/PASSWORD、JWT_SECRET、SEED_DEMO、RATE_LIMIT_WRITES（默认600，适配分批导入的密集写请求）。演示密码和JWT secret仅用于本地，部署须设置自己的值。首次启动自动seed，独立重复执行也幂等，不覆盖用户测点和说明。
 
 Compose恰好frontend/backend/worker/db/redis五服务，各有healthcheck。Nginx `/api/`移除前缀后转发FastAPI，前端探针127.0.0.1；backend等DB/Redis，worker再等backend。真实Celery任务保存JSON与数据库结果，后端/worker共享artifacts命名卷。停止清除本题演示数据：`docker compose down -v --remove-orphans`。
 
@@ -32,7 +32,7 @@ Compose恰好frontend/backend/worker/db/redis五服务，各有healthcheck。Ngi
 
 1. 09:00，林纬打开“谱峰总览”，先区分空间周期证据和制造原因。
 2. 在“不等距测线”核对 `LD-34A 十八毫米纹理` / `ld-traverse-1-202611.csv`，如 `LD1-P001` 的位置mm和厚度mm。保留实际间距，不插成等距输入。
-3. 导入独立织片JSON或修订厚度；重复位置会拒绝。每条4–240点、跨度≤10000mm，已有任务保留提交时数据快照。
+3. 导入独立织片JSON或修订厚度；重复位置会拒绝。每条4–100000点、跨度≤10000mm，已有任务保留提交时数据快照。超过单次请求体量时用分批导入：先开导入会话声明批次数，再按批次（每批≤10000点、可乱序到达）上传，跨批重复位置或编号整批拒绝且不写入任何点；未完成导入的测线不能冻结计划、排队或修订，全部批次到齐并完成后才供研究。
 4. 在“频率计划”预先声明周期范围10–90mm：fmin=1/90、fmax=.1、201等频点、B199、seed234。计划冻结后不编辑；看过谱峰才改范围应作为探索新研究，需独立资料核对。
 5. 从该测线的冻结计划排队。提交时源点和计划都复制进run，worker只使用这两份快照。
 6. A研究120点/201频点，选中18mm、功率.933678718814。全网格null最大值没有达到观测值，p=(0+1)/(199+1)=.005，而不是对挑出的频率报单频p。
@@ -52,17 +52,38 @@ cos/sin列各减其均值形成A，QR分解A=QR。对中心化厚度y_c，解释
 
 每个频率的QR只由x决定，整条任务缓存一次。B199–499次固定x打乱y标签，每次仍重新计算完整纳入网格的功率并取最大，保存所有null最大值。`p_global=(1+#nullmax≥observedmax−tol)/(B+1)`，预先tol=1e-12保守计入数值并列；最大峰频率在同tol并列时取较低频率。+1使B199的最小Monte Carlo p=.005。
 
+### 十万测点的分块流式引擎
+
+当全量QR缓存估算 `2×F×N×8` 超过64MiB（201频点下约N>2万）时，自动从原引擎切换到 `services/streaming.py` 的分块流式引擎；阈值以下的小样本始终走原 `qr_cache/spectrum/permutation` 路径，结果逐位一致。流式引擎保持同一套中心化、QR与置换数学，只改变计算顺序与存储：
+
+- 每个频率的SVD/QR只计算一次，Q块写入临时文件并以mmap复用，常驻工作集只有“一个频率块Q（FREQ_BLOCK=24）+ 一个置换块y（PERM_BLOCK=8）”，不随F×N整体增长；
+- 置换外层按与原引擎相同的RNG调用次序生成 `rng.permutation`，因此null序列、全局p与直方图确定，且不随分块大小变化（仅块内求和顺序带来≤1e-16的ULP级差异）；
+- 十万测点/401频点/B499最大计划实测：峰值RSS约204MiB（红线256MiB）、约60s完成，完整保留401频全谱、十万点逐点拟合与全部499个置换null最大值；
+- 观测侧（最大功率、RSS0、最佳频率系数/相位、全谱、逐点拟合）与原引擎逐位一致；临时块文件在分析结束（含异常）时清理。
+
 采样窗口是`|mean(exp(i2πf(x−x₀)))|²`，只由位置决定，用来核对采样结构；它不能消除混叠。默认网格Δf约.00044444444 cycles/mm，不等于周期CI。该全局p只对预先冻结的搜索范围、iid可交换且同方差误差的无周期null解释，不是制造原因、在线诊断或任意后验挑范围的确认检验。
 
 ## 实体、界面与校验
 
-79个有职责的Python/TS/TSX/CSS文件（不含空包、依赖和dist）。五实体TraverseStudy → TraversePoint → FrequencyPlan → SpectrumRun → WeaveNote贯穿ORM/schema/service/routes、前端API/store和六页：谱峰总览、不等距测线、频率计划、完整谱与全局p、织片补测、过程留痕。
+六实体 TraverseStudy（含导入状态/批次计数）→ ImportBatch → TraversePoint → FrequencyPlan → SpectrumRun → WeaveNote 贯穿ORM/schema/service/routes、前端API/store和六页：谱峰总览、不等距测线、频率计划、完整谱与全局p、织片补测、过程留痕。后端测试位于 `backend/tests/`（pytest，SQLite内存库，19项），覆盖双引擎数值等价、分块不变性、分批导入整批拒绝、未完成门控、快照隔离、批准保留、worker集成与十万点全流程。
 
 前端 `src/{api,stores,types,components/common,hooks,pages,router,utils,constants}`；后端 `src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}`，另scripts/seed_demo.py与migrations/。SpectrumPlot、TracePlot、PeakSummary、RunList在多页复用，PermutationPanel只画后端实际null频数；useTask/useRoute和format处理交互。React挂载id=root与createRoot一致。
 
-Role/RunStatus/NoteStatus位于 `backend/src/constants/enums.py`，前端对应 `frontend/src/constants/enums.ts`。JWT、审计、RequestID/Error/Redis写限流三个中间件形成横切链路。配额按令牌摘要或无令牌IP分钟计数，默认60写请求，429含Retry-After；计数服务不可用503，健康GET不计。审批行锁使draft只能审一次，CSV取冻结result_snapshot。
+Role/RunStatus/NoteStatus位于 `backend/src/constants/enums.py`，前端对应 `frontend/src/constants/enums.ts`（另有 StudyStatus：ready/importing）。JWT、审计、RequestID/Error/Redis写限流三个中间件形成横切链路。配额按令牌摘要或无令牌IP分钟计数，默认600写请求，429含Retry-After；计数服务不可用503，健康GET不计。审批行锁使draft只能审一次，CSV取冻结result_snapshot。
 
-位置有限且0–1e12、测线跨度≤10000mm；厚度有限且0–1e6；频率严格递增、正且≤1周期/mm，3–401点，计划B199–499。NaN/Inf/bool数值参数、重复位置、错误测线/计划匹配均安全422；错误对象不回显非法input。PG数值列使用Double(asdecimal=False)，真实数据库类型double precision，API保持Python float。
+位置有限且0–1e12、测线跨度≤10000mm；厚度有限且0–1e6；频率严格递增、正且≤1周期/mm，3–401点，计划B199–499。单测线4–100000点、单导入批次1–10000点。NaN/Inf/bool数值参数、重复位置、错误测线/计划匹配均安全422；跨批重复位置/编号、重复或越界批次序号整批拒绝（409/422），本批不写入任何点。错误对象不回显非法input。PG数值列使用Double(asdecimal=False)，真实数据库类型double precision，API保持Python float。
+
+## 分批导入接口与列表瘦身
+
+|方法与路径|作用|
+|---|---|
+|`POST /studies/import-sessions`|建立导入会话，声明计划批次数；测线初始 `status=importing`|
+|`POST /studies/{id}/batches`|上传一个批次（batch_index可乱序）；跨批重复位置/编号整批拒绝|
+|`POST /studies/{id}/complete`|全部批次到齐后完成导入，状态转 `ready` 才供计划/排队/修订|
+|`GET /studies/{id}/batches`|查看已接收批次序号与每批测点数|
+|`GET /points?study_id=&limit=&offset=`|测点按测线分页拉取，避免十万点全量回传|
+
+`GET /runs` 与 `GET /notes` 只回摘要列（不含源点快照、计划快照、完整结果或批准全谱）；完整结果经 `GET /runs/{id}` 按需获取，前端打开运行时再拉详情。排队时源点与计划整体复制进run快照，队列后的并发修订不改变已采用测点，冻结运行与已批准说明（含 `result_snapshot`、审核意见）原样保留。
 
 |层|实现|
 |---|---|
